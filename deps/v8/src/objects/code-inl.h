@@ -526,8 +526,23 @@ inline void Code::SetMarkedForDeoptimization(Isolate* isolate,
     if (SafeEquals(cur)) {
       if (v8_flags.reopt_after_lazy_deopts &&
           isolate->concurrent_recompilation_enabled()) {
-        jdt->SetCodeNoWriteBarrier(
-            handle, *BUILTIN_CODE(isolate, InterpreterEntryTrampoline));
+        // With --interpreted-frames-native-stack, interpreted functions get a
+        // per-function copy of the InterpreterEntryTrampoline so that they are
+        // distinguishable on the native stack (linux perf / samply). Resetting
+        // the dispatch entry to the shared builtin trampoline here would lose
+        // that attribution after a lazy deopt, so route to the function's own
+        // trampoline copy when one exists (falling back to the shared builtin).
+        Tagged<Code> bytecode_entry =
+            *BUILTIN_CODE(isolate, InterpreterEntryTrampoline);
+        if (V8_UNLIKELY(isolate->interpreted_frames_native_stack())) {
+          Tagged<SharedFunctionInfo> sfi =
+              Cast<DeoptimizationData>(deoptimization_data())
+                  ->GetSharedFunctionInfo();
+          if (sfi->HasInterpreterData(isolate)) {
+            bytecode_entry = sfi->InterpreterTrampoline(isolate);
+          }
+        }
+        jdt->SetCodeNoWriteBarrier(handle, bytecode_entry);
         // Somewhat arbitrary list of lazy deopt reasons which we expect to be
         // stable enough to warrant either immediate re-optimization, or
         // re-optimization after one invocation (to detect potential follow-up
